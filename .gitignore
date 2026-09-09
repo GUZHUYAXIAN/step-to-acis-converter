@@ -1,0 +1,12 @@
+.worktrees/
+__pycache__/
+*.py[cod]
+.validation/
+gui_settings.json
+gui_settings.json.tmp
+.venv-build/
+dist/
+release/
+build/
+converter_config.json
+spaceclaim_cli_profile.json

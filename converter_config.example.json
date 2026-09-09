@@ -1,0 +1,19 @@
+{
+  "_comment_input": "请将 input_dir 改为 STEP 文件所在目录",
+  "_comment_output": "请将 output_dir 改为单独的输出目录，不要与输入目录相同",
+  "spaceclaim_exe": "C:\\Program Files\\ANSYS Inc\\v222\\SCDM\\SpaceClaim.exe",
+  "input_dir": "C:\\STEP 输入",
+  "output_dir": "C:\\ACIS 输出",
+  "recursive": false,
+  "output_formats": [
+    "SAB"
+  ],
+  "overwrite_policy": "Skip",
+  "acis_version": "V22",
+  "acis_units": "Millimeters",
+  "chunk_size": 20,
+  "heartbeat_timeout_seconds": 900,
+  "retry_count": 0,
+  "preserve_relative_directories": true,
+  "long_path_warning_threshold": 240
+}

@@ -1,0 +1,26 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(2022, 2, 0, 0),
+    prodvers=(2022, 2, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'040904b0',
+        [StringStruct(u'CompanyName', u'Validation Only'),
+         StringStruct(u'FileDescription', u'Fake SpaceClaim Host - Validation Only'),
+         StringStruct(u'FileVersion', u'2022.2.0.0'),
+         StringStruct(u'InternalName', u'SpaceClaim'),
+         StringStruct(u'OriginalFilename', u'SpaceClaim.exe'),
+         StringStruct(u'ProductName', u'ANSYS SpaceClaim Validation Host'),
+         StringStruct(u'ProductVersion', u'2022.2.0.0')])
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
+  ]
+)
