@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 
-_RESOURCE_NAMES = frozenset({"probe_v22.py", "worker_v22.py"})
+_RESOURCE_NAMES = frozenset({"probe_v22.py", "worker_v22.py", "probe_v261.py", "worker_v261.py"})
 
 
 @dataclass(frozen=True)

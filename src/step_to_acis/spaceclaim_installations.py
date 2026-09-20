@@ -7,6 +7,7 @@ import re
 from typing import Literal
 
 from .windows_file_version import FileVersionError, FileVersionInfo, read_file_version
+from .spaceclaim_versions import RELEASES, SpaceClaimRelease, release_for_versions
 
 
 Eligibility = Literal["eligible", "unsupported", "unreadable", "missing"]
@@ -21,6 +22,13 @@ class SpaceClaimCandidate:
     sources: tuple[str, ...]
     eligibility: Eligibility
     reason: str
+
+    @property
+    def release(self) -> SpaceClaimRelease:
+        release = release_for_versions(self.product_version, self.file_version)
+        if self.layout_version.casefold() != release.layout:
+            raise ValueError("SpaceClaim layout and version metadata do not match")
+        return release
 
 
 def candidate_paths(
@@ -39,9 +47,10 @@ def candidate_paths(
             found[key] = (resolved, set())
         found[key][1].add(source)
 
-    awp_root = environ.get("AWP_ROOT222")
-    if awp_root:
-        add(Path(awp_root) / "SCDM" / "SpaceClaim.exe", "environment")
+    for release in RELEASES:
+        awp_root = environ.get("AWP_ROOT" + release.layout[1:])
+        if awp_root:
+            add(Path(awp_root) / "SCDM" / "SpaceClaim.exe", "environment")
 
     for variable in ("ProgramFiles", "ProgramFiles(x86)"):
         value = environ.get(variable)
@@ -89,7 +98,7 @@ def classify_candidate(
             executable, "", "", layout_version, tuple(sources), "unreadable",
             "cannot read SpaceClaim version metadata: {}".format(error),
         )
-    if layout_version.casefold() != "v222":
+    if layout_version.casefold() not in {release.layout for release in RELEASES}:
         return SpaceClaimCandidate(
             executable,
             version.product_version,
@@ -97,12 +106,13 @@ def classify_candidate(
             layout_version,
             tuple(sources),
             "unsupported",
-            "only the v222 layout is verified",
+            "only the v222 / v261 layouts are supported",
         )
-    if not (
-        version.product_version.startswith("2022.2.")
-        and version.file_version.startswith("2022.2.")
-    ):
+    try:
+        release = release_for_versions(version.product_version, version.file_version)
+        if layout_version.casefold() != release.layout:
+            raise ValueError("installation layout does not match version metadata")
+    except ValueError as error:
         return SpaceClaimCandidate(
             executable,
             version.product_version,
@@ -110,7 +120,7 @@ def classify_candidate(
             layout_version,
             tuple(sources),
             "unsupported",
-            "only SpaceClaim 2022 R2 version metadata is verified",
+            "SpaceClaim 2022 R2 / 2026 R1 validation failed: {}".format(error),
         )
     return SpaceClaimCandidate(
         executable,
@@ -119,7 +129,7 @@ def classify_candidate(
         layout_version,
         tuple(sources),
         "eligible",
-        "SpaceClaim 2022 R2/v222 may be capability-probed",
+        "{}/{} may be capability-probed".format(release.label, release.layout),
     )
 
 

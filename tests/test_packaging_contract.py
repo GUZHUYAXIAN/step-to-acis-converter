@@ -14,7 +14,7 @@ class PackagingContractTests(unittest.TestCase):
             pins,
         )
 
-    def test_spec_is_one_folder_console_app_with_only_runtime_scripts_as_data(self):
+    def test_spec_is_one_folder_windowed_app_with_only_runtime_scripts_as_data(self):
         source = (self.root / "packaging" / "step_to_acis.spec").read_text(encoding="utf-8")
         self.assertEqual(1, source.count("EXE("))
         self.assertEqual(1, source.count("COLLECT("))
@@ -22,10 +22,12 @@ class PackagingContractTests(unittest.TestCase):
         for required in (
             "portable_launcher.py",
             'name="STEP转ACIS"',
-            "console=True",
+            "console=False",
             "windows_version_info.txt",
             '"probe_v22.py"',
             '"worker_v22.py"',
+            '"probe_v261.py"',
+            '"worker_v261.py"',
             '"resources"',
         ):
             self.assertIn(required, source)
@@ -83,15 +85,15 @@ class PackagingContractTests(unittest.TestCase):
         self.assertFalse((self.root / "packaging" / "RELEASE_NOTES_v1.0.0.md").exists())
         self.assertTrue((self.root / "packaging" / "RELEASE_NOTES_v1.0.1.md").is_file())
 
-    def test_windows_version_metadata_is_v101(self):
+    def test_windows_version_metadata_is_v110_release(self):
         metadata = (self.root / "packaging" / "windows_version_info.txt").read_text(
             encoding="utf-8"
         )
         for required in (
-            "filevers=(1, 0, 1, 0)",
-            "prodvers=(1, 0, 1, 0)",
-            "FileVersion', u'1.0.1.0",
-            "ProductVersion', u'1.0.1",
+            "filevers=(1, 1, 0, 3)",
+            "prodvers=(1, 1, 0, 3)",
+            "FileVersion', u'1.1.0.3",
+            "ProductVersion', u'1.1.0",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, metadata)

@@ -183,6 +183,17 @@ class ProbeRunnerTests(unittest.TestCase):
         self.assertTrue(outcome.ended_at)
         self.assertGreaterEqual(outcome.elapsed_seconds, 0)
 
+    def test_launcher_disconnects_stdin_and_requests_no_console_on_windows(self):
+        with patch.object(probe_runner.subprocess, "run") as run:
+            run.return_value = SimpleNamespace(returncode=0, stdout=b"ok", stderr=b"")
+            outcome = launch_subprocess(["SpaceClaim.exe"], 5)
+        self.assertEqual(0, outcome.returncode)
+        self.assertEqual(probe_runner.subprocess.DEVNULL, run.call_args.kwargs["stdin"])
+        self.assertEqual(
+            getattr(probe_runner.subprocess, "CREATE_NO_WINDOW", 0),
+            run.call_args.kwargs["creationflags"],
+        )
+
     def test_process_output_uses_preferred_encoding_without_locale_getencoding(self):
         legacy_locale = SimpleNamespace(
             getpreferredencoding=lambda do_setlocale=False: "utf-8"

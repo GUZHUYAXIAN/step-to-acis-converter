@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import json
 import locale
@@ -65,6 +65,14 @@ class CliCapabilityProfile:
     script_args: bool
     script_output: bool
     script_args_strategy: str
+    api_version: str = "V22"
+    script_api_v261: bool = False
+
+    def supports_api(self, api_version: str) -> bool:
+        if self.api_version != api_version:
+            return False
+        return ((api_version == "V22" and self.script_api_v22 is True and not self.script_api_v261)
+                or (api_version == "V261" and self.script_api_v261 is True and not self.script_api_v22))
 
 
 def build_probe_stages(
@@ -109,9 +117,12 @@ def build_model_free_headless_stages(
     executable: Path,
     script: Path,
     script_output: Path,
+    api_version: str = "V22",
 ) -> list[ProbeStage]:
     """Build the portable-release probe without ever opening the SpaceClaim UI."""
-    return [
+    from .spaceclaim_versions import release_for_api
+    release_for_api(api_version)
+    stages = [
         ProbeStage(
             "required_headless",
             True,
@@ -137,10 +148,12 @@ def build_model_free_headless_stages(
             ),
         ),
     ]
+    return [replace(stage, command=replace(stage.command, api_version=api_version)) for stage in stages]
 
 
 def required_stages_passed(records: Sequence[ProbeStageRecord]) -> bool:
-    return all(record.passed for record in records if record.required)
+    required = [record for record in records if record.required]
+    return bool(required) and all(record.passed for record in required)
 
 
 def find_script_arg_exposure(
@@ -174,6 +187,7 @@ def run_probe_stage(
             sentinel_path=sentinel_path,
             script_output_path=stage.command.script_output,
             require_script_output=stage.require_script_output,
+            api_version=stage.command.api_version,
         )
     )
     passed = evaluation.passed
@@ -211,8 +225,10 @@ def launch_subprocess(command: list[str], timeout_seconds: float) -> LaunchOutco
     try:
         completed = subprocess.run(
             command,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             timeout=timeout_seconds,
             check=False,
         )
@@ -240,7 +256,7 @@ def launch_subprocess(command: list[str], timeout_seconds: float) -> LaunchOutco
     )
 
 
-def profile_from_records(records: Sequence[ProbeStageRecord]) -> CliCapabilityProfile:
+def profile_from_records(records: Sequence[ProbeStageRecord], api_version: str = "V22") -> CliCapabilityProfile:
     by_name = {record.name: record for record in records}
     base = by_name.get("required_base")
     headless = by_name.get("required_headless")
@@ -250,10 +266,17 @@ def profile_from_records(records: Sequence[ProbeStageRecord]) -> CliCapabilityPr
     # stage. A passing required Headless stage proves the same required command
     # switches while satisfying the release's model-free startup contract.
     base_passed = bool(base.passed if base is not None else headless and headless.passed)
+    # Real records must attest the requested API. Legacy synthetic test records
+    # without a sentinel remain supported for V22 only.
+    required = [record for record in records if record.required and record.passed]
+    if api_version not in {"V22", "V261"} or any(
+        (record.sentinel or {}).get("api_expected", "V22") != api_version for record in required
+    ):
+        base_passed = False
     args_passed = bool(script_args and script_args.passed)
     return CliCapabilityProfile(
         run_script=base_passed,
-        script_api_v22=base_passed,
+        script_api_v22=base_passed and api_version == "V22",
         exit_after_script=base_passed,
         headless=bool(headless and headless.passed),
         script_args=args_passed,
@@ -263,6 +286,8 @@ def profile_from_records(records: Sequence[ProbeStageRecord]) -> CliCapabilityPr
             if args_passed and script_args is not None
             else "specialized_worker_literal"
         ),
+        api_version=api_version,
+        script_api_v261=base_passed and api_version == "V261",
     )
 
 

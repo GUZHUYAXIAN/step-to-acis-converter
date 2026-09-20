@@ -13,6 +13,8 @@ a = Analysis(
     datas=[
         (str(project_root / "spaceclaim" / "probe_v22.py"), "resources"),
         (str(project_root / "spaceclaim" / "worker_v22.py"), "resources"),
+        (str(project_root / "spaceclaim" / "probe_v261.py"), "resources"),
+        (str(project_root / "spaceclaim" / "worker_v261.py"), "resources"),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -34,7 +36,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    console=False,
     version=str(version_file),
 )
 

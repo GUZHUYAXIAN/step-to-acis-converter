@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -30,7 +31,7 @@ class PortableMainTests(unittest.TestCase):
         self.root_dir = Path(self.temporary_directory.name)
         resources = self.root_dir / "resources"
         resources.mkdir()
-        for name in ("probe_v22.py", "worker_v22.py"):
+        for name in ("probe_v22.py", "worker_v22.py", "probe_v261.py", "worker_v261.py"):
             (resources / name).write_text("resource", encoding="utf-8")
         state_root = self.root_dir / "state"
         self.paths = RuntimePaths(
@@ -152,6 +153,20 @@ class PortableMainTests(unittest.TestCase):
         )
         self.assertIn("from step_to_acis.portable_main import main", source)
         self.assertIn("raise SystemExit(main())", source)
+
+    def test_windowed_entry_provides_streams_before_constructing_gui(self):
+        def run_gui(paths):
+            self.assertEqual(self.paths, paths)
+            print("GUI startup")
+            sys.stderr.write("GUI diagnostic\n")
+            return 0
+
+        with patch("step_to_acis.portable_main.default_runtime_paths", return_value=self.paths), patch(
+            "step_to_acis.portable_main._run_gui", side_effect=run_gui
+        ), patch.object(sys, "stdout", None), patch.object(sys, "stderr", None):
+            self.assertEqual(0, main())
+        logs = list((self.paths.state_root / "logs").glob("*.log"))
+        self.assertIn("GUI diagnostic", logs[0].read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

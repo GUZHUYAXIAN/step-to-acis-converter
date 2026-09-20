@@ -116,7 +116,7 @@ def validate_form_values(values: GuiFormValues) -> GuiFormValues:
     input_dir = values.input_dir.strip()
     output_dir = values.output_dir.strip()
     if _normalized_path(input_dir) == _normalized_path(output_dir):
-        raise GuiInputError("input_dir and output_dir must be distinct")
+        raise GuiInputError("输入与输出文件夹不能相同，请选择另一个输出目录。（input_dir and output_dir must be distinct）")
     if values.output_format not in {"SAB", "SAT"}:
         raise GuiInputError("output_format must be SAB or SAT")
     if type(values.recursive) is not bool:

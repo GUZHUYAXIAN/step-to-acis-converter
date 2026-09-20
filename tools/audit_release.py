@@ -15,7 +15,7 @@ REQUIRED_TOP_LEVEL = {
     "LICENSE",
     "licenses",
 }
-ALLOWED_RESOURCES = {"probe_v22.py", "worker_v22.py"}
+ALLOWED_RESOURCES = {"probe_v22.py", "worker_v22.py", "probe_v261.py", "worker_v261.py"}
 FORBIDDEN_PARTS = {
     ".git",
     ".worktrees",

@@ -2,9 +2,11 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from step_to_acis.discovery import (
     OutputSafetyError,
+    DiscoveryError,
     assert_safe_output,
     build_plan,
     scan_step_files,
@@ -76,6 +78,46 @@ class DiscoveryTests(unittest.TestCase):
             [top, nested],
             scan_step_files(self.input_dir, recursive=True),
         )
+
+    def test_one_step_among_mixed_models_and_directories_is_found(self):
+        source = self.create_source("唯一的模型.STP")
+        for index in range(20):
+            self.create_source("目录{}/零件.prt".format(index))
+            self.create_source("模型{}.sldprt".format(index))
+        for recursive in (False, True):
+            self.assertEqual([source], scan_step_files(self.input_dir, recursive))
+
+    def test_explicit_selection_never_scans_and_deduplicates(self):
+        first = self.create_source("a.STP")
+        second = self.create_source("子目录/b.StEp")
+        self.create_source("unselected.stp")
+        with patch("step_to_acis.discovery.scan_step_files", side_effect=AssertionError("scanned")):
+            tasks, preflight = build_plan(self.config(recursive=False), (second, first, first))
+        self.assertEqual([first, second], [task.source_path for task in tasks])
+        self.assertEqual([], preflight)
+        self.assertEqual(self.output_dir / "子目录/b.sab", tasks[1].output_path)
+
+    def test_invalid_explicit_selection_fails_instead_of_converting_other_files(self):
+        self.create_source("valid.stp")
+        wrong = self.create_source("wrong.prt")
+        outside = self.root / "outside.stp"
+        outside.write_bytes(b"step")
+        for selected in ((), (wrong,), (self.input_dir / "gone.stp",), (outside,)):
+            with self.subTest(selected=selected), self.assertRaises(DiscoveryError):
+                build_plan(self.config(), selected)
+
+    def test_selected_files_preserve_skip_and_collision_protection(self):
+        a = self.create_source("part.stp")
+        b = self.create_source("part.step")
+        self.output_dir.mkdir()
+        (self.output_dir / "part.sab").write_bytes(b"keep")
+        tasks, results = build_plan(self.config(), (a,))
+        self.assertEqual([], tasks)
+        self.assertEqual([Status.SKIPPED], [result.status for result in results])
+        tasks, results = build_plan(self.config(), (a, b))
+        self.assertEqual([], tasks)
+        self.assertEqual([Status.FAILED, Status.FAILED], [result.status for result in results])
+        self.assertEqual(b"keep", (self.output_dir / "part.sab").read_bytes())
 
     def test_plan_preserves_relative_directories_and_names(self):
         source = self.create_source("子目录/连接板 001.STP", b"12345")

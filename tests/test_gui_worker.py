@@ -105,6 +105,27 @@ class ConverterGuiWorkerTests(ConverterGuiConstructionTests):
         self.assertEqual(self.success_outcome().csv_path, events[0].payload["csv_path"])
         self.assertEqual(self.success_outcome().run_log_path, events[0].payload["run_log_path"])
 
+    def test_worker_uses_selection_snapshot_and_does_not_save_it_as_future_input(self):
+        calls = []
+        gui, _, threads = self.make_worker_gui(
+            lambda request, reporter: calls.append(request) or self.success_outcome()
+        )
+        selected = self.input_dir / "selected.STP"
+        selected.write_bytes(b"STEP")
+        gui.view.get_selected_files = lambda: (selected,)
+        gui.start_conversion()
+        gui.view.get_selected_files = lambda: None
+        threads[0].target()
+        self.assertEqual((selected,), calls[0].selected_files)
+        self.assertNotIn("selected.STP", self.settings_path.read_text(encoding="utf-8"))
+
+    def test_missing_selected_file_does_not_start_worker(self):
+        gui, _, threads = self.make_worker_gui(lambda *args: self.fail("worker ran"))
+        gui.view.get_selected_files = lambda: (self.input_dir / "missing.stp",)
+        gui.start_conversion()
+        self.assertEqual([], threads)
+        self.assertIn("所选文件不存在", gui.view.errors[-1])
+
     def test_nonzero_outcome_emits_one_batch_failed_event(self):
         outcome = BatchOutcome(4, None, (), None, None, None, "fatal", "service failed")
         gui, _, _ = self.make_worker_gui(lambda request, reporter: outcome)

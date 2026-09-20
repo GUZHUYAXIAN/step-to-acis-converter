@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .probe_runner import CliCapabilityProfile
 from .spaceclaim_installations import SpaceClaimCandidate
+from .spaceclaim_versions import release_for_versions
 
 
 @dataclass(frozen=True)
@@ -53,7 +54,7 @@ def load_cached_capability(
         return None
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or payload.get("cache_schema") != 2:
+        if not isinstance(payload, dict) or payload.get("cache_schema") not in (2, 3):
             return None
         identity_payload = payload["identity"]
         identity = ExecutableIdentity(
@@ -75,8 +76,13 @@ def load_cached_capability(
             script_args=capabilities["script_args"] is True,
             script_output=capabilities["script_output"] is True,
             script_args_strategy=str(capabilities["script_args_strategy"]),
+            api_version=capabilities.get("api_version", "V22"),
+            script_api_v261=capabilities.get("script_api_v261") is True,
         )
-        if not _profile_authorizes(profile):
+        expected_api = release_for_versions(current.product_version, current.file_version).api_version
+        if payload["cache_schema"] == 2 and expected_api != "V22":
+            return None
+        if not profile.supports_api(expected_api) or not _profile_authorizes(profile):
             return None
         return CachedCapability(
             identity=identity,
@@ -85,13 +91,13 @@ def load_cached_capability(
             probe_report=str(payload["probe_report"]),
             verified_at=str(payload["verified_at"]),
         )
-    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError):
         return None
 
 
 def save_cached_capability(path: Path, value: CachedCapability) -> None:
     payload = {
-        "cache_schema": 2,
+        "cache_schema": 3,
         "identity": asdict(value.identity),
         "probe_completed": value.probe_completed,
         "probe_report": value.probe_report,
@@ -129,7 +135,7 @@ def _identity_matches(cached: ExecutableIdentity, current: ExecutableIdentity) -
 def _profile_authorizes(profile: CliCapabilityProfile) -> bool:
     return (
         profile.run_script
-        and profile.script_api_v22
+        and profile.supports_api(profile.api_version)
         and profile.exit_after_script
         and profile.headless
         and profile.script_args_strategy == "specialized_worker_literal"

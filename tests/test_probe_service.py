@@ -90,6 +90,26 @@ class ProbeServiceTests(unittest.TestCase):
         suffixes = {path.suffix.casefold() for path in self.paths.environment_root.rglob("*") if path.is_file()}
         self.assertTrue(suffixes.isdisjoint({".stp", ".step", ".sab", ".sat"}))
 
+    def test_progress_precedes_each_real_stage_and_stops_after_required_failure(self):
+        for succeeds in (True, False):
+            with self.subTest(succeeds=succeeds):
+                progress, calls = [], []
+
+                def launcher(command, timeout):
+                    calls.append(progress[-1])
+                    self.assertIn("能力探测 {}/3".format(len(calls)), progress[-1])
+                    self.assertIn("最多 120 秒", progress[-1])
+                    if succeeds:
+                        return self.successful_launcher(command, timeout)
+                    return LaunchOutcome(None, True, "", "timeout", "start", "end", 120)
+
+                outcome = run_model_free_probe(
+                    self.candidate, self.paths, launcher=launcher, on_progress=progress.append
+                )
+                self.assertEqual(succeeds, outcome.passed)
+                self.assertEqual(3 if succeeds else 1, len(calls))
+                self.assertIn("保存自检报告", progress[-1])
+
     def test_required_failure_and_timeout_never_write_authorizing_cache(self):
         outcomes = [
             LaunchOutcome(7, False, "", "failed", "start", "end", 0.1),

@@ -18,6 +18,7 @@ from .runtime_paths import resource_path
 from .spaceclaim_command import SpaceClaimCommand, build_production_command
 from .supervisor import BatchSupervisor
 from .windows_file_version import FileVersionError, read_file_version
+from .spaceclaim_versions import release_for_api, validate_acis_version
 
 
 class CapabilityProfileError(ValueError):
@@ -30,6 +31,7 @@ class BatchRequest:
     overrides: Mapping[str, Any]
     capability_profile_path: Path
     worker_template_path: Path | None = None
+    selected_files: tuple[Path, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -76,7 +78,7 @@ def run_batch(
 ) -> BatchOutcome:
     try:
         config = load_config(request.config_path, request.overrides)
-        tasks, preflight = build_plan(config)
+        tasks, preflight = build_plan(config, request.selected_files)
     except (ConfigError, DiscoveryError, OSError) as error:
         return _error_outcome(2, "preflight", error)
 
@@ -86,6 +88,9 @@ def run_batch(
         run_log = run_directory / "conversion_run.txt"
         csv_path = run_directory / "conversion_log.csv"
         append_run_log(run_log, "SpaceClaim executable: {}".format(config.spaceclaim_exe))
+        append_run_log(run_log, "Input mode: {}".format(
+            "folder scan" if request.selected_files is None else "selected files only"
+        ))
         append_run_log(
             run_log,
             "Configuration: format={} policy={} version={} units={} recursive={} chunk_size={}".format(
@@ -111,12 +116,16 @@ def run_batch(
         if tasks:
             loader = capability_profile_loader or load_verified_capability_profile
             profile = loader(request.capability_profile_path, config)
+            release = release_for_api(profile.api_version)
+            validate_acis_version(profile.api_version, config.resolved_acis_version)
+            append_run_log(run_log, release.output_note)
 
             def command_factory(worker: Path, script_output: Path) -> list[str]:
                 command = SpaceClaimCommand(
                     executable=config.spaceclaim_exe,
                     script=worker,
                     script_output=script_output if profile.script_output else None,
+                    api_version=profile.api_version,
                 )
                 built = build_production_command(command, profile)
                 append_run_log(
@@ -160,7 +169,7 @@ def run_batch(
                 config=config,
                 run_directory=run_directory / "worker_runs",
                 worker_template=(
-                    request.worker_template_path or resource_path("worker_v22.py")
+                    request.worker_template_path or resource_path(release.worker_resource)
                 ),
                 command_factory=command_factory,
                 status_callback=status_handler,
@@ -232,7 +241,7 @@ def load_verified_capability_profile(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise CapabilityProfileError("cannot read profile: {}".format(error)) from error
-    if payload.get("cache_schema") == 2:
+    if payload.get("cache_schema") in (2, 3):
         try:
             version = read_file_version(config.spaceclaim_exe)
             current = ExecutableIdentity(
@@ -259,7 +268,10 @@ def load_verified_capability_profile(
     if _sha256_file(config.spaceclaim_exe) != payload.get("spaceclaim_executable_sha256"):
         raise CapabilityProfileError("SpaceClaim executable hash changed after probing")
     try:
-        return CliCapabilityProfile(**payload["capabilities"])
+        profile = CliCapabilityProfile(**payload["capabilities"])
+        if profile.api_version != "V22":
+            raise CapabilityProfileError("2026 R1 requires a fresh version-bound capability cache")
+        return profile
     except (KeyError, TypeError) as error:
         raise CapabilityProfileError("profile capabilities are invalid") from error
 

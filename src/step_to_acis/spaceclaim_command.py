@@ -22,6 +22,7 @@ class ProbeObservation:
     sentinel_path: Path
     script_output_path: Path | None = None
     require_script_output: bool = False
+    api_version: str = "V22"
 
 
 @dataclass(frozen=True)
@@ -54,7 +55,7 @@ def build_production_command(
 ) -> list[str]:
     required = (
         ("RunScript", profile.run_script),
-        ("ScriptAPI=V22", profile.script_api_v22),
+        ("ScriptAPI={}".format(value.api_version), profile.supports_api(value.api_version)),
         ("ExitAfterScript", profile.exit_after_script),
         ("Headless", profile.headless),
     )
@@ -120,7 +121,7 @@ def evaluate_probe_execution(observation: ProbeObservation) -> ProbeEvaluation:
         sentinel = json.loads(observation.sentinel_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return ProbeEvaluation(False, "sentinel JSON is invalid")
-    if not _is_valid_sentinel(sentinel):
+    if not _is_valid_sentinel(sentinel, observation.api_version):
         return ProbeEvaluation(False, "sentinel content is invalid")
     if observation.require_script_output:
         output = observation.script_output_path
@@ -129,12 +130,13 @@ def evaluate_probe_execution(observation: ProbeObservation) -> ProbeEvaluation:
     return ProbeEvaluation(True, "probe passed", sentinel)
 
 
-def _is_valid_sentinel(value: Any) -> bool:
+def _is_valid_sentinel(value: Any, api_version: str = "V22") -> bool:
     return (
         isinstance(value, dict)
         and value.get("probe_schema") == 1
         and value.get("script_executed") is True
-        and value.get("api_expected") == "V22"
+        and api_version in {"V22", "V261"}
+        and value.get("api_expected") == api_version
         and value.get("host_api_verified") is True
         and value.get("unicode_round_trip") == "中文 path with spaces"
         and isinstance(value.get("sys_argv"), list)

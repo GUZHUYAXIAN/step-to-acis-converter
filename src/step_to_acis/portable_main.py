@@ -13,6 +13,7 @@ from .portable_config import (
     write_portable_config,
 )
 from .runtime_paths import RuntimePaths, default_runtime_paths, resource_path
+from .windowed_logging import windowed_streams
 
 
 def launch_converter(
@@ -30,7 +31,8 @@ def launch_converter(
         raise ValueError("environment self-check has not authorized conversion")
 
     config_path = paths.state_root / "runtime_config.json"
-    write_portable_config(config_path, state.selected.executable)
+    release = state.selected.release
+    write_portable_config(config_path, state.selected.executable, release.api_version)
     marker_path = portable_paths_marker_path(paths)
     factory = converter_factory or ConverterGui
     return factory(
@@ -38,17 +40,23 @@ def launch_converter(
         config_path=config_path,
         capability_profile_path=state.profile_path,
         settings_path=paths.gui_settings_path,
-        worker_template_path=resource_path("worker_v22.py", root=paths.resource_root),
-        defaults=GuiFormValues(input_dir="", output_dir=""),
+        worker_template_path=resource_path(release.worker_resource, root=paths.resource_root),
+        defaults=GuiFormValues(input_dir="", output_dir="", acis_version=release.default_acis_version),
+        api_version=release.api_version,
         restore_saved_paths=has_accepted_portable_paths(marker_path),
         on_settings_saved=lambda: mark_portable_paths_accepted(marker_path),
     )
 
 
 def main() -> int:
+    paths = default_runtime_paths()
+    with windowed_streams(paths.state_root):
+        return _run_gui(paths)
+
+
+def _run_gui(paths: RuntimePaths) -> int:
     root = tk.Tk()
     root.title("STEP → ACIS 环境自检")
-    paths = default_runtime_paths()
     controller = EnvironmentController(paths)
     holder = {}
 

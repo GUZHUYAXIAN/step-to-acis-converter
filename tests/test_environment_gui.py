@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 import queue
 import unittest
+from unittest.mock import Mock
 
 from step_to_acis.environment_gui import (
     EnvironmentCheckGui,
@@ -35,6 +36,7 @@ class FakeView:
         self.rendered = []
         self.busy = []
         self.errors = []
+        self.progress = []
         self.destroyed = False
 
     def bind_controller(self, controller):
@@ -48,6 +50,9 @@ class FakeView:
 
     def show_error(self, message):
         self.errors.append(message)
+
+    def show_progress(self, message, elapsed):
+        self.progress.append((message, elapsed))
 
     def destroy(self):
         self.destroyed = True
@@ -67,6 +72,9 @@ class FakeController:
     def __init__(self, state):
         self.state = state
         self.calls = []
+
+    def set_progress_callback(self, callback):
+        self.progress_callback = callback
 
     def scan(self):
         self.calls.append("scan")
@@ -251,6 +259,64 @@ class EnvironmentGuiTests(unittest.TestCase):
         gui.poll_events()
         self.assertTrue(gui.view.destroyed)
         self.assertEqual([], root.after_calls)
+
+    def test_progress_is_immediate_and_worker_feedback_only_renders_when_polled(self):
+        gui, _, controller, threads, approvals = self.make_gui(passing_state())
+        gui.clock = lambda: 10.0
+        gui.rescan()
+        self.assertIn("正在扫描", gui.view.progress[-1][0])
+        self.assertEqual(0.0, gui.view.progress[-1][1])
+        controller.progress_callback("能力探测 1/3：等待 SpaceClaim")
+        self.assertNotIn("能力探测", gui.view.progress[-1][0])
+        gui.clock = lambda: 17.0
+        gui.poll_events()
+        self.assertEqual(("能力探测 1/3：等待 SpaceClaim", 7.0), gui.view.progress[-1])
+        self.assertEqual([True], gui.view.busy)
+        gui.enter_converter()
+        self.assertEqual([], approvals)
+        gui.rescan()
+        self.assertEqual(1, len(threads))
+        threads[0].target()
+        gui.poll_events()
+        self.assertEqual(("自检结束", 7.0), gui.view.progress[-1])
+        self.assertEqual([True, False], gui.view.busy)
+
+    def test_elapsed_time_keeps_updating_while_waiting_without_new_events(self):
+        gui, _, _, _, _ = self.make_gui()
+        gui.clock = lambda: 1.0
+        gui.reprobe()
+        gui.clock = lambda: 31.0
+        gui.poll_events()
+        self.assertEqual(30.0, gui.view.progress[-1][1])
+        self.assertTrue(gui._worker_active)
+
+    def test_thread_start_failure_stops_progress_and_revokes_old_approval(self):
+        gui, _, _, _, _ = self.make_gui(passing_state())
+        thread = Mock()
+        thread.start.side_effect = RuntimeError("thread unavailable")
+        gui.thread_factory = lambda **kwargs: thread
+        gui.rescan()
+        gui.poll_events()
+        self.assertFalse(gui._worker_active)
+        self.assertEqual([True, False], gui.view.busy)
+        self.assertFalse(gui.view.rendered[-1].can_enter_converter)
+        self.assertEqual(["thread unavailable"], gui.view.errors)
+
+    def test_busy_view_animates_bar_and_disables_candidate_selection(self):
+        view = _TkEnvironmentView.__new__(_TkEnvironmentView)
+        view.state = EnvironmentState()
+        for name in ("candidate_box", "summary_var", "candidate_var", "progress_bar",
+                     "rescan_button", "manual_button", "reprobe_button", "enter_button"):
+            setattr(view, name, Mock())
+        view.set_busy(True)
+        view.candidate_box.configure.assert_called_with(state="disabled")
+        view.progress_bar.start.assert_called_once()
+        view.candidate_var.set.assert_called_with("正在检测，请稍候…")
+        view.state = passing_state()
+        view.set_busy(False)
+        view.progress_bar.stop.assert_called_once()
+        view.candidate_box.configure.assert_called_with(state="readonly")
+        view.enter_button.configure.assert_called_with(state="normal")
 
 
 if __name__ == "__main__":

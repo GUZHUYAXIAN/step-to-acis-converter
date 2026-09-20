@@ -3,9 +3,10 @@ import os
 from pathlib import Path
 
 from .runtime_paths import RuntimePaths
+from .spaceclaim_versions import release_for_api
 
 
-def portable_config_payload(spaceclaim_exe: Path) -> dict[str, object]:
+def portable_config_payload(spaceclaim_exe: Path, api_version: str = "V22") -> dict[str, object]:
     return {
         "spaceclaim_exe": str(spaceclaim_exe.resolve()),
         "input_dir": "",
@@ -13,7 +14,7 @@ def portable_config_payload(spaceclaim_exe: Path) -> dict[str, object]:
         "recursive": False,
         "output_formats": ["SAB"],
         "overwrite_policy": "Skip",
-        "acis_version": "V22",
+        "acis_version": release_for_api(api_version).default_acis_version,
         "acis_units": "Millimeters",
         "chunk_size": 20,
         "heartbeat_timeout_seconds": 900,
@@ -23,8 +24,8 @@ def portable_config_payload(spaceclaim_exe: Path) -> dict[str, object]:
     }
 
 
-def write_portable_config(path: Path, spaceclaim_exe: Path) -> None:
-    _atomic_json_write(path, portable_config_payload(spaceclaim_exe))
+def write_portable_config(path: Path, spaceclaim_exe: Path, api_version: str = "V22") -> None:
+    _atomic_json_write(path, portable_config_payload(spaceclaim_exe, api_version))
 
 
 def portable_paths_marker_path(paths: RuntimePaths) -> Path:

@@ -7,7 +7,7 @@ from .models import AcisSettings, ConverterConfig, OutputFormat, OverwritePolicy
 
 
 SUPPORTED_ACIS_VERSIONS = frozenset(
-    ["V6", "V7"] + ["V{}".format(number) for number in range(15, 32)]
+    ["V5", "V6", "V7"] + ["V{}".format(number) for number in range(15, 32)]
 )
 SUPPORTED_ACIS_UNITS = frozenset(
     ["Meters", "Centimeters", "Millimeters", "Feet", "Inches"]
@@ -78,7 +78,7 @@ def _parse_config(values: Mapping[str, Any]) -> ConverterConfig:
     )
     version = values.get("acis_version", "V22")
     if version != "current_spaceclaim_default" and version not in SUPPORTED_ACIS_VERSIONS:
-        raise ConfigError("acis_version is not supported by V22: {!r}".format(version))
+        raise ConfigError("acis_version is not supported: {!r}".format(version))
     units = values.get("acis_units", "Millimeters")
     if units not in SUPPORTED_ACIS_UNITS:
         raise ConfigError("acis_units is invalid: {!r}".format(units))

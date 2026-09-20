@@ -156,7 +156,10 @@ class BatchSupervisor:
         last_activity = time.monotonic()
         observed_event_count = 0
         with stdout_path.open("wb") as stdout_file, stderr_path.open("wb") as stderr_file:
-            process = subprocess.Popen(command, stdout=stdout_file, stderr=stderr_file)
+            process = subprocess.Popen(
+                command, stdin=subprocess.DEVNULL, stdout=stdout_file, stderr=stderr_file,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            )
             self.status_callback(
                 {"kind": "process_started", "chunk_id": chunk_id, "pid": process.pid}
             )

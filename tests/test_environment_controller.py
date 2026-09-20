@@ -17,7 +17,7 @@ class EnvironmentControllerTests(unittest.TestCase):
         self.root = Path(self.temporary_directory.name)
         resource_root = self.root / "resources"
         resource_root.mkdir()
-        for name in ("probe_v22.py", "worker_v22.py"):
+        for name in ("probe_v22.py", "worker_v22.py", "probe_v261.py", "worker_v261.py"):
             (resource_root / name).write_text("resource", encoding="utf-8")
         state_root = self.root / "state"
         self.paths = RuntimePaths(
@@ -128,6 +128,19 @@ class EnvironmentControllerTests(unittest.TestCase):
         self.assertEqual(1, calls["save"])
         self.assertTrue(any(check.status == "warning" for check in state.checks))
 
+    def test_scan_reports_stages_and_cache_hit_does_not_claim_live_probe(self):
+        controller, calls = self.make_controller(candidates=(self.eligible,), cache=self.cache)
+        progress = []
+        controller.set_progress_callback(progress.append)
+        state = controller.scan()
+        self.assertTrue(state.can_enter_converter)
+        self.assertIn("正在扫描", progress[0])
+        self.assertEqual(4, sum(message.startswith("正在检查：") for message in progress))
+        self.assertTrue(any("程序指纹" in message for message in progress))
+        self.assertIn("能力缓存", progress[-1])
+        self.assertFalse(any("能力探测" in message for message in progress))
+        self.assertEqual(0, calls["probe"])
+
     def test_no_candidate_and_unsupported_only_fail_with_actionable_chinese_rows(self):
         for candidates in ((), (self.unsupported,)):
             with self.subTest(candidates=candidates):
@@ -231,6 +244,8 @@ class EnvironmentControllerTests(unittest.TestCase):
         worker = self.paths.resource_root / "worker_v22.py"
         probe.write_text("SENTINEL_PATH = None\n", encoding="utf-8")
         worker.write_text("MANIFEST_PATH = None\n", encoding="utf-8")
+        (self.paths.resource_root / "probe_v261.py").write_text("SENTINEL_PATH = None\n", encoding="utf-8")
+        (self.paths.resource_root / "worker_v261.py").write_text("MANIFEST_PATH = None\n", encoding="utf-8")
         self.assertTrue(_resources_exist(self.paths))
 
         worker.write_bytes(b"\xff\xfe\x00")

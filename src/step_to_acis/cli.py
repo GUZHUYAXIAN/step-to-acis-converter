@@ -18,7 +18,7 @@ from .reporting import format_size
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="STEP → ACIS batch converter powered by SpaceClaim 2022 R2"
+        description="STEP → ACIS batch converter powered by SpaceClaim 2022 R2 / 2026 R1"
     )
     parser.add_argument(
         "--config",
@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="existing-output policy override (default from config: Skip)",
     )
-    parser.add_argument("--acis-version")
+    parser.add_argument("--acis-version", help="2022 R2: default V22; 2026 R1: V5 only (no silent downgrade)")
     parser.add_argument("--acis-units")
     parser.add_argument("--chunk-size", type=int)
     parser.add_argument("--timeout", type=float)

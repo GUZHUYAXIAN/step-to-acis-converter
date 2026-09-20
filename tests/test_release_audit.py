@@ -20,7 +20,7 @@ class ReleaseAuditTests(unittest.TestCase):
         (self.staging / "RELEASE_NOTES.md").write_text("发行说明", encoding="utf-8")
         (self.staging / "LICENSE").write_text("MIT License", encoding="utf-8")
         (self.staging / "licenses" / "LICENSE.txt").write_text("license", encoding="utf-8")
-        for name in ("probe_v22.py", "worker_v22.py"):
+        for name in ("probe_v22.py", "worker_v22.py", "probe_v261.py", "worker_v261.py"):
             (self.staging / "_internal" / "resources" / name).write_text("safe", encoding="utf-8")
         (self.staging / "_internal" / "python312.dll").write_bytes(b"runtime")
         self.zip_path = self.root / "release.zip"

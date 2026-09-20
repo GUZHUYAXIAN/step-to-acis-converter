@@ -10,6 +10,7 @@ from collections.abc import Callable
 from .batch_service import BatchOutcome, BatchRequest, run_batch
 from .cli import ConsoleReporter, render_batch_outcome
 from .config import load_config
+from .discovery import DiscoveryError, validate_selected_files
 from .gui_models import (
     GuiEvent,
     GuiFormValues,
@@ -19,6 +20,7 @@ from .gui_models import (
 )
 from .gui_reporting import CompositeReporter, QueueReporter
 from .gui_settings import default_settings_path, load_gui_settings, save_gui_settings
+from .spaceclaim_versions import release_for_api, validate_acis_version
 
 
 class ConverterGui:
@@ -36,6 +38,7 @@ class ConverterGui:
         defaults: GuiFormValues | None = None,
         restore_saved_paths: bool = True,
         on_settings_saved: Callable[[], None] | None = None,
+        api_version: str = "V22",
     ):
         self.root = root
         self.config_path = config_path
@@ -45,10 +48,12 @@ class ConverterGui:
         self.batch_runner = batch_runner
         self.thread_factory = thread_factory
         self.on_settings_saved = on_settings_saved
+        self.release = release_for_api(api_version)
         self.event_queue = queue.Queue()
         self.state = GuiRunState()
         self._worker_active = False
         self._worker_thread = None
+        self._run_selected_files = None
 
         if defaults is None:
             config = load_config(config_path)
@@ -68,9 +73,14 @@ class ConverterGui:
             defaults,
             restore_paths=restore_saved_paths,
         )
+        version_changed = values.acis_version not in self.release.acis_versions
+        if version_changed:
+            values = replace(values, acis_version=self.release.default_acis_version)
         self._run_values = values
         factory = view_factory or _TkView
         self.view = factory(root, values)
+        if hasattr(self.view, "configure_release"):
+            self.view.configure_release(self.release, version_changed)
         if hasattr(self.view, "bind_controller"):
             self.view.bind_controller(self)
         self.root.protocol("WM_DELETE_WINDOW", self.request_close)
@@ -86,14 +96,18 @@ class ConverterGui:
             return
         try:
             values = validate_form_values(self.view.get_form_values())
-            load_config(self.config_path, values.to_overrides())
+            validate_acis_version(self.release.api_version, values.acis_version)
+            config = load_config(self.config_path, values.to_overrides())
+            selected = getattr(self.view, "get_selected_files", lambda: None)()
+            selected = None if selected is None else tuple(validate_selected_files(config.input_dir, selected))
             save_gui_settings(self.settings_path, values)
             if self.on_settings_saved is not None:
                 self.on_settings_saved()
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, DiscoveryError) as error:
             self.view.show_error(str(error))
             return
         self._run_values = values
+        self._run_selected_files = selected
         self._worker_active = True
         self.state = replace(self.state, running=True)
         self.view.set_controls_enabled(False)
@@ -113,6 +127,7 @@ class ConverterGui:
                     overrides=values.to_overrides(),
                     capability_profile_path=self.capability_profile_path,
                     worker_template_path=self.worker_template_path,
+                    selected_files=self._run_selected_files,
                 ),
                 reporter,
             )
@@ -168,6 +183,9 @@ class _TkView:
         self.root = root
         self.advanced_visible = False
         self._controller = None
+        self._selected_files = None
+        self._controls_enabled = True
+        self.selection_var = tk.StringVar(value="文件夹模式：扫描 STP/STEP")
         self.input_var = tk.StringVar(value=values.input_dir)
         self.output_var = tk.StringVar(value=values.output_dir)
         self.format_var = tk.StringVar(value=values.output_format)
@@ -184,8 +202,10 @@ class _TkView:
         self.process_var = tk.StringVar(value="PID / Chunk：—")
         self.message_var = tk.StringVar(value="就绪")
         self.paths_var = tk.StringVar(value="CSV / TXT：—")
+        self.release_var = tk.StringVar(value="")
         self._editable = []
         self._build()
+        self.input_var.trace_add("write", lambda *_: self.clear_file_selection())
 
     def bind_controller(self, controller: ConverterGui) -> None:
         self._controller = controller
@@ -204,20 +224,33 @@ class _TkView:
         self._folder_row(frame, 0, "输入文件夹", self.input_var)
         self._folder_row(frame, 1, "输出文件夹", self.output_var)
 
-        ttk.Label(frame, text="输出格式").grid(row=2, column=0, sticky="w", pady=4)
+        selection_bar = ttk.Frame(frame)
+        selection_bar.grid(row=2, column=0, columnspan=3, sticky="ew", pady=4)
+        choose_files = ttk.Button(selection_bar, text="点选 STEP 文件…", command=self.choose_step_files)
+        choose_files.pack(side="left")
+        clear_files = ttk.Button(selection_bar, text="切回文件夹扫描", command=self.clear_file_selection)
+        clear_files.pack(side="left", padx=6)
+        ttk.Label(selection_bar, textvariable=self.selection_var).pack(side="left")
+        self._editable.extend([choose_files, clear_files])
+        self.selected_text = scrolledtext.ScrolledText(frame, height=3, wrap="word", state="disabled")
+        self.selected_text.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 4))
+        self.selected_text.grid_remove()
+
+        ttk.Label(frame, text="输出格式").grid(row=4, column=0, sticky="w", pady=4)
         format_box = ttk.Frame(frame)
-        format_box.grid(row=2, column=1, sticky="w")
+        format_box.grid(row=4, column=1, sticky="w")
         for value in ("SAB", "SAT"):
             widget = ttk.Radiobutton(format_box, text=value, variable=self.format_var, value=value)
             widget.pack(side="left", padx=(0, 12))
             self._editable.append(widget)
         recursive = ttk.Checkbutton(frame, text="包含子文件夹", variable=self.recursive_var)
-        recursive.grid(row=2, column=2, sticky="w")
+        self.recursive_check = recursive
+        recursive.grid(row=4, column=2, sticky="w")
         self._editable.append(recursive)
 
-        ttk.Label(frame, text="覆盖策略").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Label(frame, text="覆盖策略").grid(row=5, column=0, sticky="w", pady=4)
         policy_box = ttk.Frame(frame)
-        policy_box.grid(row=3, column=1, sticky="w")
+        policy_box.grid(row=5, column=1, sticky="w")
         self.policy_radios = []
         for value in ("Skip", "Overwrite"):
             widget = ttk.Radiobutton(policy_box, text=value, variable=self.policy_var, value=value)
@@ -230,10 +263,10 @@ class _TkView:
             foreground="#b00020",
             wraplength=560,
         )
-        self.warning_label.grid(row=4, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        self.warning_label.grid(row=6, column=0, columnspan=3, sticky="w", pady=(0, 4))
 
         self.advanced_button = ttk.Button(frame, text="高级设置 ▸")
-        self.advanced_button.grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 2))
+        self.advanced_button.grid(row=7, column=0, columnspan=3, sticky="w", pady=(4, 2))
         self.advanced_frame = ttk.LabelFrame(frame, text="高级设置", padding=8)
         advanced = [
             ("ACIS Version", self.version_var, ("V22", "V23", "V24", "V25", "V26", "V27", "V28", "V29", "V30", "V31")),
@@ -251,19 +284,29 @@ class _TkView:
             self._editable.append(widget)
 
         self.start_button = ttk.Button(frame, text="开始批量转换")
-        self.start_button.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(10, 8))
+        self.start_button.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(10, 8))
         self.progress = ttk.Progressbar(frame, variable=self.progress_var, maximum=100.0)
-        self.progress.grid(row=8, column=0, columnspan=3, sticky="ew")
-        ttk.Label(frame, textvariable=self.progress_text_var).grid(row=9, column=0, columnspan=3, sticky="w")
-        ttk.Label(frame, textvariable=self.counts_var).grid(row=10, column=0, columnspan=3, sticky="w")
-        ttk.Label(frame, textvariable=self.current_file_var).grid(row=11, column=0, columnspan=3, sticky="w")
-        ttk.Label(frame, textvariable=self.process_var).grid(row=12, column=0, columnspan=3, sticky="w")
-        ttk.Label(frame, textvariable=self.message_var, wraplength=650).grid(row=13, column=0, columnspan=3, sticky="w")
-        ttk.Label(frame, textvariable=self.paths_var, wraplength=650).grid(row=14, column=0, columnspan=3, sticky="w")
+        self.progress.grid(row=10, column=0, columnspan=3, sticky="ew")
+        ttk.Label(frame, textvariable=self.progress_text_var).grid(row=11, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, textvariable=self.counts_var).grid(row=12, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, textvariable=self.current_file_var).grid(row=13, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, textvariable=self.process_var).grid(row=14, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, textvariable=self.message_var, wraplength=650).grid(row=15, column=0, columnspan=3, sticky="w")
+        ttk.Label(frame, textvariable=self.paths_var, wraplength=650).grid(row=16, column=0, columnspan=3, sticky="w")
         self.events_text = scrolledtext.ScrolledText(frame, height=8, wrap="word", state="disabled")
-        self.events_text.grid(row=15, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
-        frame.rowconfigure(15, weight=1)
+        self.events_text.grid(row=17, column=0, columnspan=3, sticky="nsew", pady=(6, 0))
+        ttk.Label(frame, textvariable=self.release_var, wraplength=650).grid(row=18, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        frame.rowconfigure(17, weight=1)
         self.update_overwrite_warning()
+
+    def configure_release(self, release, version_changed: bool) -> None:
+        for widget in self._editable:
+            if isinstance(widget, ttk.Combobox) and str(widget.cget("textvariable")) == str(self.version_var):
+                widget.configure(values=release.acis_versions)
+        note = release.output_note
+        if version_changed:
+            note += " 已将不适用的历史设置改为 {}，请确认后开始转换。".format(release.default_acis_version)
+        self.release_var.set(note)
 
     def _folder_row(self, parent, row, label, variable) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=4)
@@ -277,6 +320,44 @@ class _TkView:
         selected = filedialog.askdirectory(initialdir=variable.get() or None)
         if selected:
             variable.set(selected)
+
+    def choose_step_files(self) -> None:
+        if not self._controls_enabled:
+            return
+        selected = filedialog.askopenfilenames(
+            parent=self.root,
+            title="点选要转换的 STP/STEP 文件（Ctrl/Shift 可多选）",
+            initialdir=self.input_var.get() or None,
+            filetypes=[("STEP 模型", ("*.stp", "*.step", "*.STP", "*.STEP"))],
+        )
+        if not selected:
+            return
+        root = Path(selected[0]).resolve().parent
+        try:
+            files = tuple(validate_selected_files(root, (Path(path) for path in selected)))
+        except (OSError, DiscoveryError) as error:
+            self.show_error(str(error))
+            return
+        self.input_var.set(str(root))
+        self._selected_files = files
+        self.selection_var.set("仅转换已选的 {} 个文件".format(len(files)))
+        self.selected_text.configure(state="normal")
+        self.selected_text.delete("1.0", "end")
+        self.selected_text.insert("1.0", "\n".join(path.name for path in files))
+        self.selected_text.configure(state="disabled")
+        self.selected_text.grid()
+        self.recursive_check.configure(state="disabled")
+
+    def clear_file_selection(self) -> None:
+        if not self._controls_enabled:
+            return
+        self._selected_files = None
+        self.selection_var.set("文件夹模式：扫描 STP/STEP")
+        self.selected_text.grid_remove()
+        self.recursive_check.configure(state="normal")
+
+    def get_selected_files(self) -> tuple[Path, ...] | None:
+        return self._selected_files
 
     def get_form_values(self) -> GuiFormValues:
         return GuiFormValues(
@@ -292,12 +373,15 @@ class _TkView:
         )
 
     def set_controls_enabled(self, enabled: bool) -> None:
+        self._controls_enabled = enabled
         for widget in self._editable:
             if isinstance(widget, ttk.Combobox):
                 widget.configure(state="readonly" if enabled else "disabled")
             else:
                 widget.configure(state="normal" if enabled else "disabled")
         self.start_button.configure(state="normal" if enabled else "disabled")
+        if self._selected_files is not None:
+            self.recursive_check.configure(state="disabled")
 
     def show_error(self, message: str) -> None:
         messagebox.showerror("STEP → ACIS", message, parent=self.root)
@@ -305,7 +389,7 @@ class _TkView:
     def toggle_advanced(self) -> None:
         self.advanced_visible = not self.advanced_visible
         if self.advanced_visible:
-            self.advanced_frame.grid(row=6, column=0, columnspan=3, sticky="ew")
+            self.advanced_frame.grid(row=8, column=0, columnspan=3, sticky="ew")
             self.advanced_button.configure(text="高级设置 ▾")
         else:
             self.advanced_frame.grid_remove()
@@ -356,6 +440,11 @@ class _TkView:
 
 def main() -> int:
     root_dir = Path(__file__).resolve().parents[2]
+    from .spaceclaim_installations import validate_manual_selection
+    config = load_config(root_dir / "converter_config.json")
+    candidate = validate_manual_selection(config.spaceclaim_exe)
+    if candidate.eligibility != "eligible":
+        raise ValueError(candidate.reason)
     root = tk.Tk()
     root.title("STEP to ACIS Converter")
     gui = ConverterGui(
@@ -363,6 +452,7 @@ def main() -> int:
         config_path=root_dir / "converter_config.json",
         capability_profile_path=root_dir / "spaceclaim_cli_profile.json",
         settings_path=default_settings_path(),
+        api_version=candidate.release.api_version,
     )
     gui.poll_events()
     root.mainloop()

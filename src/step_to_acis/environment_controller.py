@@ -42,7 +42,7 @@ class EnvironmentController:
         manual_classifier: Callable[[Path], SpaceClaimCandidate] = validate_manual_selection,
         identity_builder: Callable[[SpaceClaimCandidate], ExecutableIdentity] = executable_identity,
         cache_loader: Callable[[Path, ExecutableIdentity], CachedCapability | None] = load_cached_capability,
-        probe_service: Callable[[SpaceClaimCandidate, RuntimePaths], ProbeServiceOutcome] = run_model_free_probe,
+        probe_service: Callable[[SpaceClaimCandidate, RuntimePaths], ProbeServiceOutcome] | None = None,
         previous_loader: Callable[[Path], Path | None] = load_selected_executable,
         selected_saver: Callable[[Path, ExecutableIdentity], None] = save_selected_executable,
     ) -> None:
@@ -55,7 +55,12 @@ class EnvironmentController:
         self._manual_classifier = manual_classifier
         self._identity_builder = identity_builder
         self._cache_loader = cache_loader
-        self._probe_service = probe_service
+        self._progress_callback: Callable[[str], None] = lambda message: None
+        self._probe_service = probe_service or (
+            lambda candidate, paths: run_model_free_probe(
+                candidate, paths, on_progress=self._report_progress
+            )
+        )
         self._previous_loader = previous_loader
         self._selected_saver = selected_saver
         self._selected_path = paths.environment_root / "selected-spaceclaim.json"
@@ -65,7 +70,14 @@ class EnvironmentController:
     def state(self) -> EnvironmentState:
         return self._state
 
+    def set_progress_callback(self, callback: Callable[[str], None]) -> None:
+        self._progress_callback = callback
+
+    def _report_progress(self, message: str) -> None:
+        self._progress_callback(message)
+
     def scan(self) -> EnvironmentState:
+        self._report_progress("正在扫描 SpaceClaim 安装位置…")
         previous = self._previous_loader(self._selected_path)
         candidates = tuple(self._discoverer(previous))
         selected = _preferred_eligible(candidates, previous)
@@ -73,6 +85,7 @@ class EnvironmentController:
         return self._state
 
     def select_manual(self, executable: Path) -> EnvironmentState:
+        self._report_progress("正在验证所选 SpaceClaim 的路径和版本…")
         candidate = self._manual_classifier(executable)
         candidates = _merge_candidate(self._state.candidates, candidate)
         self._state = self._evaluate(candidates, candidate, bypass_cache=False)
@@ -139,7 +152,9 @@ class EnvironmentController:
                 checks=tuple(checks),
             )
 
-        checks.append(_passed("spaceclaim_version", "版本为已验证的 2022 R2/v222"))
+        checks.append(_passed("spaceclaim_version", "支持的版本：{}；仍需本机能力自检".format(selected.release.label)))
+        checks.append(CheckResult("output_contract", "warning", "warning",
+                                  selected.release.output_note, "请核对输出要求。", "在转换界面确认 ACIS 版本。"))
         if any(check.status == "failure" for check in checks if check.severity == "required"):
             checks.append(
                 _failed(
@@ -152,17 +167,20 @@ class EnvironmentController:
             return EnvironmentState(candidates, selected, tuple(checks))
 
         try:
+            self._report_progress("正在校验 {} 程序指纹…".format(selected.release.label))
             identity = self._identity_builder(selected)
             self._selected_saver(self._selected_path, identity)
             cached = None
             cached_path = cache_path(self.paths.capability_profiles_root, identity)
             if not bypass_cache:
+                self._report_progress("正在检查本机能力缓存…")
                 cached = self._cache_loader(cached_path, identity)
             if cached is not None:
                 profile_path = cached_path
                 report_path = Path(cached.probe_report)
                 checks.append(_passed("headless_capability", "Headless 能力缓存有效"))
             else:
+                self._report_progress("正在准备 SpaceClaim 无模型能力探测…")
                 outcome = self._probe_service(selected, self.paths)
                 report_path = outcome.report_path
                 if outcome.passed and outcome.profile_path is not None:
@@ -197,29 +215,33 @@ class EnvironmentController:
         )
 
     def _base_checks(self) -> list[CheckResult]:
+        def check(check_id, summary, probe, failure_reason, remediation):
+            self._report_progress("正在检查：{}…".format(summary))
+            return _probe_check(check_id, summary, probe, failure_reason, remediation)
+
         return [
-            _probe_check(
+            check(
                 "windows_x64",
                 "Windows x64 环境",
                 self._windows_x64_probe,
                 "当前系统不是受支持的 64 位 Windows。",
                 "请在 Windows x64 计算机上运行此便携版。",
             ),
-            _probe_check(
+            check(
                 "resources",
                 "运行资源完整",
                 lambda: self._resource_probe(self.paths),
                 "探测脚本或转换 worker 资源缺失。",
                 "请重新解压完整的发行 ZIP，不要单独复制 EXE。",
             ),
-            _probe_check(
+            check(
                 "temp_writable",
                 "临时目录可写",
                 lambda: self._temp_writable_probe(Path(tempfile.gettempdir())),
                 "系统临时目录不可写。",
                 "请检查临时目录权限和可用空间。",
             ),
-            _probe_check(
+            check(
                 "state_writable",
                 "本地状态目录可写",
                 lambda: self._state_writable_probe(self.paths.state_root),
@@ -237,6 +259,8 @@ def _resources_exist(paths: RuntimePaths) -> bool:
     required_markers = {
         "probe_v22.py": "SENTINEL_PATH = None",
         "worker_v22.py": "MANIFEST_PATH = None",
+        "probe_v261.py": "SENTINEL_PATH = None",
+        "worker_v261.py": "MANIFEST_PATH = None",
     }
     try:
         for name, marker in required_markers.items():
@@ -277,7 +301,7 @@ def _preferred_eligible(
             candidate_key = os.path.normcase(str(candidate.executable.resolve(strict=False))).casefold()
             if candidate_key == previous_key:
                 return candidate
-    return eligible[0] if eligible else None
+    return max(eligible, key=lambda candidate: candidate.release.version_prefix) if eligible else None
 
 
 def _merge_candidate(
@@ -300,7 +324,7 @@ def _candidate_warnings(candidates: tuple[SpaceClaimCandidate, ...]) -> list[Che
             "warning",
             "检测到但未经验证：{}".format(candidate.executable),
             candidate.reason,
-            "如需转换，请选择 SpaceClaim 2022 R2/v222。",
+            "如需转换，请选择 SpaceClaim 2022 R2/v222 或 2026 R1/v261。",
         )
         for index, candidate in enumerate(candidates)
         if candidate.eligibility != "eligible"
@@ -313,19 +337,19 @@ def _missing_selection_checks() -> list[CheckResult]:
             "spaceclaim_selected",
             "未选择可用的 SpaceClaim",
             "自动扫描没有找到已验证版本。",
-            "请重新扫描，或手动选择 SpaceClaim 2022 R2/v222 的 SpaceClaim.exe。",
+            "请重新扫描，或手动选择 SpaceClaim 2022 R2/v222 或 2026 R1/v261 的 SpaceClaim.exe。",
         ),
         _failed(
             "spaceclaim_version",
             "SpaceClaim 版本未获放行",
-            "没有已验证的 2022 R2/v222 候选项。",
-            "请安装或选择 SpaceClaim 2022 R2/v222。",
+            "没有已验证的 2022 R2/v222 或 2026 R1/v261 候选项。",
+            "请安装或选择 SpaceClaim 2022 R2/v222 或 2026 R1/v261。",
         ),
         _failed(
             "headless_capability",
             "尚未完成 Headless 能力探测",
             "必须先选择已验证版本。",
-            "选择 SpaceClaim 2022 R2/v222 后重新探测。",
+            "选择 SpaceClaim 2022 R2/v222 或 2026 R1/v261 后重新探测。",
         ),
     ]
 
@@ -336,13 +360,13 @@ def _unsupported_selection_checks(candidate: SpaceClaimCandidate) -> list[CheckR
             "spaceclaim_version",
             "检测到但未经验证",
             candidate.reason,
-            "请改选 SpaceClaim 2022 R2/v222。",
+            "请改选 SpaceClaim 2022 R2/v222 或 2026 R1/v261。",
         ),
         _failed(
             "headless_capability",
             "未对该版本执行能力探测",
             "未经验证的版本不能进入转换工具。",
-            "请改选 SpaceClaim 2022 R2/v222。",
+            "请改选 SpaceClaim 2022 R2/v222 或 2026 R1/v261。",
         ),
     ]
 

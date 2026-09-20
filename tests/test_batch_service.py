@@ -1,4 +1,5 @@
 import csv
+from dataclasses import replace
 import json
 from pathlib import Path
 import tempfile
@@ -102,6 +103,32 @@ class BatchServiceTests(unittest.TestCase):
         self.assertEqual((), outcome.results)
         self.assertTrue(outcome.csv_path.is_file())
         self.assertTrue(outcome.run_log_path.is_file())
+
+    def test_selection_reaches_plan_without_including_unselected_files(self):
+        self.write_config(recursive=True)
+        selected = self.input_dir / "chosen.STP"
+        selected.write_bytes(b"STEP")
+        (self.input_dir / "not-chosen.step").write_bytes(b"STEP")
+        self.output_dir.mkdir()
+        (self.output_dir / "chosen.sab").write_bytes(b"existing")
+        outcome = run_batch(
+            replace(self.request(), selected_files=(selected,)), RecordingReporter(),
+            capability_profile_loader=lambda *args: self.fail("unselected file reached CAD"),
+        )
+        self.assertEqual(0, outcome.exit_code)
+        self.assertEqual(1, outcome.summary.total)
+        self.assertEqual(str(selected), outcome.results[0].source_path)
+        self.assertIn("selected files only", outcome.run_log_path.read_text(encoding="utf-8"))
+
+    def test_deleted_selection_returns_preflight_without_creating_output(self):
+        self.write_config()
+        (self.input_dir / "other.stp").write_bytes(b"STEP")
+        outcome = run_batch(
+            replace(self.request(), selected_files=(self.input_dir / "deleted.stp",)), RecordingReporter(),
+            supervisor_factory=lambda **kwargs: self.fail("supervisor created"),
+        )
+        self.assertEqual("preflight", outcome.error_kind)
+        self.assertFalse(self.output_dir.exists())
 
     def test_mixed_supervisor_forwards_events_results_and_matching_reports(self):
         for name in ["a.stp", "b.step", "c.STP"]:

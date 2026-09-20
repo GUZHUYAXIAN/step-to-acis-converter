@@ -44,8 +44,13 @@ def scan_step_files(input_root: Path, recursive: bool) -> list[Path]:
 
 def build_plan(
     config: ConverterConfig,
+    selected_files: Iterable[Path] | None = None,
 ) -> tuple[list[ConversionTask], list[ConversionResult]]:
-    sources = scan_step_files(config.input_dir, config.recursive)
+    sources = (
+        scan_step_files(config.input_dir, config.recursive)
+        if selected_files is None
+        else validate_selected_files(config.input_dir, selected_files)
+    )
     source_paths = set(sources)
     proposals = []
     sequence = 0
@@ -102,6 +107,26 @@ def build_plan(
             continue
         tasks.append(task)
     return tasks, preflight
+
+
+def validate_selected_files(input_root: Path, selected_files: Iterable[Path]) -> list[Path]:
+    """An explicit selection never falls back to scanning the whole directory."""
+    root = input_root.resolve()
+    sources = {}
+    for selected in selected_files:
+        path = Path(selected).resolve()
+        if path.suffix.lower() not in STEP_EXTENSIONS:
+            raise DiscoveryError("只能点选 STP/STEP 文件：{}".format(path))
+        if not path.is_file():
+            raise DiscoveryError("所选文件不存在或无法读取，请重新选择：{}".format(path))
+        try:
+            path.relative_to(root)
+        except ValueError as error:
+            raise DiscoveryError("所选文件不在当前输入文件夹内，请重新选择：{}".format(path)) from error
+        sources[os.path.normcase(str(path))] = path
+    if not sources:
+        raise DiscoveryError("尚未点选 STP/STEP 文件；请选择文件或切回文件夹扫描。")
+    return sorted(sources.values(), key=lambda path: path.relative_to(root).as_posix().casefold())
 
 
 def assert_safe_output(
