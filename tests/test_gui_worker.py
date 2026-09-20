@@ -116,7 +116,7 @@ class ConverterGuiWorkerTests(ConverterGuiConstructionTests):
         gui.start_conversion()
         gui.view.get_selected_files = lambda: None
         threads[0].target()
-        self.assertEqual((selected,), calls[0].selected_files)
+        self.assertEqual((selected.resolve(),), calls[0].selected_files)
         self.assertNotIn("selected.STP", self.settings_path.read_text(encoding="utf-8"))
 
     def test_missing_selected_file_does_not_start_worker(self):

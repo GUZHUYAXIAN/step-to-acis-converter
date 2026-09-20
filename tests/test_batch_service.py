@@ -117,7 +117,7 @@ class BatchServiceTests(unittest.TestCase):
         )
         self.assertEqual(0, outcome.exit_code)
         self.assertEqual(1, outcome.summary.total)
-        self.assertEqual(str(selected), outcome.results[0].source_path)
+        self.assertEqual(str(selected.resolve()), outcome.results[0].source_path)
         self.assertIn("selected files only", outcome.run_log_path.read_text(encoding="utf-8"))
 
     def test_deleted_selection_returns_preflight_without_creating_output(self):

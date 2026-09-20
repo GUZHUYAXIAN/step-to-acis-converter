@@ -42,7 +42,7 @@ class FileSelectionViewTests(unittest.TestCase):
 
     def test_multiple_selection_shows_exact_names_count_and_disables_recursion(self):
         dialog = self.choose(tuple(map(str, self.files)))
-        self.assertEqual(set(self.files), set(self.view.get_selected_files()))
+        self.assertEqual({path.resolve() for path in self.files}, set(self.view.get_selected_files()))
         self.assertIn("2 个文件", self.view.selection_var.get())
         text = self.view.selected_text.insert.call_args.args[1]
         for file in self.files:
@@ -65,7 +65,7 @@ class FileSelectionViewTests(unittest.TestCase):
         bad = self.root / "other.prt"
         bad.write_bytes(b"PRT")
         self.choose((str(bad),))
-        self.assertEqual((self.files[0],), self.view.get_selected_files())
+        self.assertEqual((self.files[0].resolve(),), self.view.get_selected_files())
         self.view.show_error.assert_called_once()
 
     def test_running_batch_blocks_picker_and_clear(self):

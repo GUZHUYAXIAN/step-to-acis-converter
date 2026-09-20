@@ -93,9 +93,19 @@ class DiscoveryTests(unittest.TestCase):
         self.create_source("unselected.stp")
         with patch("step_to_acis.discovery.scan_step_files", side_effect=AssertionError("scanned")):
             tasks, preflight = build_plan(self.config(recursive=False), (second, first, first))
-        self.assertEqual([first, second], [task.source_path for task in tasks])
+        self.assertEqual([first.resolve(), second.resolve()], [task.source_path for task in tasks])
         self.assertEqual([], preflight)
         self.assertEqual(self.output_dir / "子目录/b.sab", tasks[1].output_path)
+
+    def test_selection_normalizes_input_root_before_computing_relative_paths(self):
+        source = self.create_source("part.stp")
+        alias_parent = self.root / "alias"
+        alias_parent.mkdir()
+        alias = alias_parent / ".." / self.input_dir.name
+        tasks, results = build_plan(self.config(input_dir=alias), (source,))
+        self.assertEqual([], results)
+        self.assertEqual(source.resolve(), tasks[0].source_path)
+        self.assertEqual(self.output_dir / "part.sab", tasks[0].output_path)
 
     def test_invalid_explicit_selection_fails_instead_of_converting_other_files(self):
         self.create_source("valid.stp")

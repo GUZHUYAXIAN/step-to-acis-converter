@@ -52,10 +52,11 @@ def build_plan(
         else validate_selected_files(config.input_dir, selected_files)
     )
     source_paths = set(sources)
+    input_root = config.input_dir if selected_files is None else config.input_dir.resolve()
     proposals = []
     sequence = 0
     for source in sources:
-        relative = source.relative_to(config.input_dir)
+        relative = source.relative_to(input_root)
         output_parent = _output_parent(config, relative)
         for output_format in config.acis.output_formats:
             sequence += 1
